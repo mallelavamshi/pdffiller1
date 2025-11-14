@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  pdf-filler-api:
+    build: .
+    container_name: pdf-filler-api
+    ports:
+      - "8003:8003"
+    volumes:
+      - ./templates:/app/templates
+      - ./outputs:/app/outputs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PORT=8003
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
