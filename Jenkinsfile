@@ -5,9 +5,10 @@ pipeline {
         DOCKER_IMAGE = 'pdf-filler-api'
         DOCKER_TAG = "${BUILD_NUMBER}"
         APP_NAME = 'pdf-filler-api'
-        DEPLOY_SERVER = 'localhost'  // Update if deploying to remote server
+        DEPLOY_SERVER = 'localhost'
         DEPLOY_USER = 'ubuntu'
         APP_PORT = '8003'
+        WORKSPACE_DIR = "${WORKSPACE}"
     }
 
     stages {
@@ -18,14 +19,38 @@ pipeline {
             }
         }
 
+        stage('Prepare Directories') {
+            steps {
+                echo 'Preparing directories...'
+                script {
+                    sh '''
+                        # Create directories if they don't exist
+                        mkdir -p templates
+                        mkdir -p outputs
+                        mkdir -p uploads
+
+                        # Check if template exists
+                        if [ ! -f "templates/Letter_of_Representation_Fillable.pdf" ]; then
+                            echo "WARNING: PDF template not found in templates directory"
+                            echo "Please copy Letter_of_Representation_Fillable.pdf to templates/"
+                        else
+                            echo "PDF template found"
+                        fi
+
+                        ls -la templates/ || true
+                    '''
+                }
+            }
+        }
+
         stage('Build Docker Image') {
             steps {
                 echo 'Building Docker image...'
                 script {
-                    sh """
-                        docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
-                        docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest
-                    """
+                    sh '''
+                        docker build -t pdf-filler-api:${BUILD_NUMBER} .
+                        docker tag pdf-filler-api:${BUILD_NUMBER} pdf-filler-api:latest
+                    '''
                 }
             }
         }
@@ -34,9 +59,9 @@ pipeline {
             steps {
                 echo 'Running tests...'
                 script {
-                    sh """
-                        docker run --rm ${DOCKER_IMAGE}:${DOCKER_TAG} python -c "import main; print('Import successful')"
-                    """
+                    sh '''
+                        docker run --rm pdf-filler-api:${BUILD_NUMBER} python -c "import main; print('Import successful')"
+                    '''
                 }
             }
         }
@@ -45,10 +70,10 @@ pipeline {
             steps {
                 echo 'Stopping old container...'
                 script {
-                    sh """
-                        docker stop ${APP_NAME} || true
-                        docker rm ${APP_NAME} || true
-                    """
+                    sh '''
+                        docker stop pdf-filler-api || true
+                        docker rm pdf-filler-api || true
+                    '''
                 }
             }
         }
@@ -57,20 +82,23 @@ pipeline {
             steps {
                 echo 'Deploying new container...'
                 script {
-                    sh """
+                    sh '''
+                        # Get absolute path of workspace
+                        WORKSPACE_PATH=$(pwd)
+
                         # Run new container
                         docker run -d \
-                            --name ${APP_NAME} \
-                            -p ${APP_PORT}:${APP_PORT} \
-                            -v \$(pwd)/templates:/app/templates \
-                            -v \$(pwd)/outputs:/app/outputs \
-                            -e PORT=${APP_PORT} \
+                            --name pdf-filler-api \
+                            -p 8003:8003 \
+                            -v ${WORKSPACE_PATH}/templates:/app/templates \
+                            -v ${WORKSPACE_PATH}/outputs:/app/outputs \
+                            -e PORT=8003 \
                             --restart unless-stopped \
-                            ${DOCKER_IMAGE}:latest
+                            pdf-filler-api:latest
 
-                        # Clean up old images
-                        docker image prune -f
-                    """
+                        echo "Container started successfully"
+                        docker ps | grep pdf-filler-api
+                    '''
                 }
             }
         }
@@ -80,9 +108,11 @@ pipeline {
                 echo 'Performing health check...'
                 script {
                     sleep(time: 10, unit: 'SECONDS')
-                    sh """
-                        curl -f http://localhost:${APP_PORT}/health || exit 1
-                    """
+                    sh '''
+                        echo "Testing health endpoint..."
+                        curl -f http://localhost:8003/health || exit 1
+                        echo "Health check passed!"
+                    '''
                 }
             }
         }
@@ -91,12 +121,12 @@ pipeline {
     post {
         success {
             echo 'Deployment successful!'
-            echo "Application running at: http://localhost:${APP_PORT}"
-            echo "API Documentation: http://localhost:${APP_PORT}/docs"
+            echo 'Application running at: http://localhost:8003'
+            echo 'API Documentation: http://localhost:8003/docs'
         }
         failure {
             echo 'Deployment failed!'
-            sh 'docker logs ${APP_NAME} || true'
+            sh 'docker logs pdf-filler-api 2>&1 | tail -50 || echo "Container not found"'
         }
         always {
             echo 'Pipeline completed.'
